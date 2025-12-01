@@ -107,6 +107,7 @@ def useExact? : TacticM Unit := do evalTactic (← `(tactic| exact?))
 def useRfl : TacticM Unit := do evalTactic (← `(tactic| intros; rfl))
 def useSimpAll : TacticM Unit := do evalTactic (← `(tactic| intros; simp_all))
 def useOmega : TacticM Unit := do evalTactic (← `(tactic| intros; omega))
+def useGrind : TacticM Unit := do evalTactic (← `(tactic| grind))
 
 open Cli System
 
@@ -119,6 +120,7 @@ def tacticBenchmarkMain (args : Cli.Parsed) : IO UInt32 := do
     if args.hasFlag "rfl" then pure useRfl else
     if args.hasFlag "simp_all" then pure useSimpAll else
     if args.hasFlag "omega" then pure useOmega else
+    if args.hasFlag "grind" then pure useGrind else
     throw <| IO.userError "Specify a tactic, e.g. `--aesop`"
   let result := runTacticAtDecls module (fun _ => pure true) tac
   IO.println s!"{module}"
@@ -138,6 +140,7 @@ def tactic_benchmark : Cmd := `[Cli|
     "rfl";         "Use `intros; rfl`."
     "simp_all";    "Use `intros; simp_all`."
     "omega";       "Use `intros; omega`."
+    "grind";       "Use `grind`."
 
   ARGS:
     module : ModuleName; "Lean module to compile and export InfoTrees."
