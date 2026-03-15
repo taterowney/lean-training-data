@@ -5,6 +5,7 @@ Authors: Scott Morrison
 -/
 import Lean.Elab.Frontend
 import Batteries.Data.MLList.Basic
+import Lake
 
 /-!
 # Compiling Lean sources to obtain `Environment`, `Message`s and `InfoTree`s.
@@ -121,7 +122,7 @@ def one : FrontendM (CompilationStep × Bool) := do
   let after := s'.env
   let msgs := s'.messages.toList.drop s.messages.toList.length
   let trees := s'.infoState.trees.drop s.infoState.trees.size
-  let ⟨_, fileName, fileMap⟩  := (← read).inputCtx
+  let ⟨_, fileName, fileMap, _, _⟩  := (← read).inputCtx
   return ({ fileName, fileMap, src, stx, before, after, msgs, trees }, done)
 
 /-- Process all commands in the input. -/
@@ -230,16 +231,82 @@ def processInput (input : String) (env? : Option Environment := none)
 
 open System
 
--- TODO allow finding Lean 4 sources from the toolchain.
+-- -- TODO allow finding Lean 4 sources from the toolchain.
+-- def findLean (mod : Name) : IO FilePath := do
+--   return FilePath.mk ((← findOLean mod).toString.replace ".lake/build/lib/lean" "") |>.withExtension "lean"
+
+
+open Lake
+def packagesDir : FilePath :=
+  if Lake.defaultPackagesDir == "packages"  then
+    ".lake" / Lake.defaultPackagesDir
+  else
+    Lake.defaultPackagesDir
+
+/--
+Return the path of `path` relative to `parent`.
+-/
+def relativeTo (path parent : FilePath) : Option FilePath :=
+  let rec componentsRelativeTo (pathComps parentComps : List String) : Option FilePath :=
+    match pathComps, parentComps with
+    | _, [] => mkFilePath pathComps
+    | [], _ => none
+    | (h₁ :: t₁), (h₂ :: t₂) =>
+      if h₁ == h₂ then
+        componentsRelativeTo t₁ t₂
+      else
+        none
+
+    componentsRelativeTo path.components parent.components
+
+
+/--
+Convert the path `path` to an absolute path.
+-/
+def toAbsolute (path : FilePath) : IO FilePath := do
+  if path.isAbsolute then
+    pure path
+  else
+    let cwd ← IO.currentDir
+    pure $ cwd / path
+
+/--
+Return the *.lean file corresponding to a module name. Credit to LeanDojo
+-/
 def findLean (mod : Name) : IO FilePath := do
-  return FilePath.mk ((← findOLean mod).toString.replace ".lake/build/lib/" "") |>.withExtension "lean"
+  let modStr := mod.toString
+  if modStr.startsWith "«lake-packages»." then
+    return FilePath.mk (modStr.replace "«lake-packages»" "lake-packages" |>.replace "." "/") |>.withExtension "lean"
+  if modStr.startsWith "«.lake»." then
+    return FilePath.mk (modStr.replace "«.lake»" ".lake" |>.replace "." "/") |>.withExtension "lean"
+  if modStr == "Lake" then
+    return packagesDir / "lean4/src/lean/lake/Lake.lean"
+  let olean ← findOLean mod
+  -- Remove a "build/lib/lean/" substring from the path.
+  let lean := olean.toString.replace ".lake/build/lib/lean/" ""
+    |>.replace "build/lib/lean/" "" |>.replace "lib/lean/Lake/" "lib/lean/lake/Lake/"
+  let mut path := FilePath.mk lean |>.withExtension "lean"
+  let leanLib ← getLibDir (← getBuildDir)
+  if let some p := relativeTo path leanLib then
+    path := packagesDir / "lean4/src/lean" / p
+
+  let cwd ← IO.currentDir
+  if path.isAbsolute then
+    match relativeTo path cwd with
+    | some relativePath => path := relativePath
+    | none => pure ()
+
+  unless ← path.pathExists do
+    throw <| IO.userError s!"Could not find source file for module {mod}, expected at {path}"
+  toAbsolute path
+
 
 /-- Implementation of `moduleSource`, which is the cached version of this function. -/
 def moduleSource' (mod : Name) : IO String := do
   IO.FS.readFile (← findLean mod)
 
 initialize sourceCache : IO.Ref <| Std.HashMap Name String ←
-  IO.mkRef .empty
+  IO.mkRef {}
 
 /-- Read the source code of the named module. The results are cached. -/
 def moduleSource (mod : Name) : IO String := do
@@ -256,7 +323,7 @@ def compileModule' (mod : Name) : MLList IO CompilationStep := do
   Lean.Elab.IO.processInput' (← moduleSource mod) none {} (← findLean mod).toString
 
 initialize compilationCache : IO.Ref <| Std.HashMap Name (List CompilationStep) ←
-  IO.mkRef .empty
+  IO.mkRef {}
 
 /--
 Compile the source file for the named module, returning the
