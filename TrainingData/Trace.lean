@@ -29,7 +29,7 @@ def Lean.parseImports'' (input : String) (fileName : String) : IO ParseImports.S
 def Lean.removeHeader (input : String) : String :=
   let s := ParseImports.main input (ParseImports.whitespace input {})
   if s.error? == none then
-    input.drop s.pos.byteIdx |>.toString
+    input.drop (s.pos.byteIdx - 2) |>.toString -- Idk why we need the `2` here, but it seems to work
   else
     input
 
@@ -80,13 +80,13 @@ where
       return (acc, seen)
 
 
-unsafe def traceModules (root : Name) (predicate : Name → Bool := root.getRoot.isPrefixOf) : IO $ MLList IO (MLList IO CompilationStep) := do
+unsafe def traceModules (root : Name) (skipMeta := true) (predicate : Name → Bool := fun n => root.getRoot.isPrefixOf n && (!skipMeta || (!n.components.contains `Tactic && !n.components.contains `Lean && !n.components.contains `Std && !n.components.contains `Util))) : IO $ MLList IO (Name × MLList IO CompilationStep) := do
   let out := MLList.ofArray (m := IO) (← collectDependenciesParsed root predicate) |>.mapM
     fun (root, imports, src) => do
       enableInitializersExecution
       let env ← importModules' imports {} (loadExts := true) (level := OLeanLevel.exported)
       let src := removeHeader (← src)
-      return processInput' src env (fileName := root.toString)
+      return (root, processInput' src env (fileName := root.toString))
   pure out
 
 
@@ -96,9 +96,9 @@ open Cli
 unsafe def traceMain (_ : Parsed) : IO UInt32 := do
   initSearchPath (← findSysroot)
 
-  for mod in (← traceModules `Mathlib) do
-    IO.println s!"New Module"
-    for step in mod do
+  for (mod, steps) in (← traceModules `Mathlib) do
+    IO.println s!"Processing {mod}"
+    for step in steps do
       -- IO.println s!"{step}"
       IO.println s!"{(← step.newDecls).map fun decl => decl.name} ({(← step.msgs.toArray.mapM (fun m => m.toString))})"
     IO.println "-------------"
