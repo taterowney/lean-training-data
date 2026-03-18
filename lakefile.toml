@@ -49,3 +49,9 @@ root = "scripts.goal_comments"
 name = "trace"
 root = "TrainingData.Trace"
 supportInterpreter = true
+
+
+[[lean_exe]]
+name = "declinfo"
+root = "TrainingData.DeclInfo"
+supportInterpreter = true
