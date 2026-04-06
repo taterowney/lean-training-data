@@ -80,7 +80,8 @@ where
       return (acc, seen)
 
 
-unsafe def traceModules (root : Name) (skipMeta := true) (predicate : Name → Bool := fun n => root.getRoot.isPrefixOf n && (!skipMeta || (!n.components.contains `Tactic && !n.components.contains `Lean && !n.components.contains `Std && !n.components.contains `Util))) : IO $ MLList IO (Name × MLList IO CompilationStep) := do
+unsafe def traceModules (root : Name) (skipMeta := true)
+  (predicate : Name → Bool := fun n => root.getRoot.isPrefixOf n && (!skipMeta || (!n.components.contains `Tactic && !n.components.contains `Lean && !n.components.contains `Std && !n.components.contains `Util))) : IO $ MLList IO (Name × MLList IO CompilationStep) := do
   let out := MLList.ofArray (m := IO) (← collectDependenciesParsed root predicate) |>.mapM
     fun (root, imports, src) => do
       enableInitializersExecution
@@ -101,6 +102,8 @@ unsafe def traceMain (_ : Parsed) : IO UInt32 := do
     for step in steps do
       -- IO.println s!"{step}"
       IO.println s!"{(← step.newDecls).map fun decl => decl.name} ({(← step.msgs.toArray.mapM (fun m => m.toString))})"
+      for tree in step.trees do
+        IO.println s!"{← tree.format}"
     IO.println "-------------"
   return 0
 
