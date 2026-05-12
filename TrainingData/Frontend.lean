@@ -40,18 +40,6 @@ set_option autoImplicit true
 
 open Lean Elab Frontend Meta
 
-namespace Lean.PersistentArray
-
-/--
-Drop the first `n` elements of a `PersistentArray`, returning the results as a `List`.
--/
--- We can't remove the `[Inhabited α]` hypotheses here until
--- `PersistentArray`'s `GetElem` instance also does.
-def drop [Inhabited α] (t : PersistentArray α) (n : Nat) : List α :=
-  List.range (t.size - n) |>.map fun i => t.get! (n + i)
-
-end Lean.PersistentArray
-
 namespace MLList
 
 /-- Run a lazy list in a `ReaderT` monad on some fixed state. -/
@@ -99,7 +87,7 @@ and any `Message`s and `InfoTree`s produced while processing.
 structure CompilationStep where
   fileName : String
   fileMap : FileMap
-  src : Substring
+  src : Substring.Raw
   stx : Syntax
   before : Environment
   after : Environment
@@ -117,11 +105,13 @@ def one : FrontendM (CompilationStep × Bool) := do
   let before := s.env
   let done ← processCommand
   let stx := (← get).commands.back!
-  let src := ⟨(← read).inputCtx.input, (← get).cmdPos, (← get).parserState.pos⟩
+  let src := Substring.Raw.mk (← read).inputCtx.inputString (← get).cmdPos (← get).parserState.pos
   let s' := (← get).commandState
   let after := s'.env
-  let msgs := s'.messages.toList.drop s.messages.toList.length
-  let trees := s'.infoState.trees.drop s.infoState.trees.size
+  -- In Lean 4 v4.28.0+, `elabCommandTopLevel` resets both `messages` and `infoState`
+  -- at the start of each command, so these already contain only this command's data.
+  let msgs := s'.messages.toList
+  let trees := s'.infoState.trees.toList
   let ⟨_, fileName, fileMap, _, _⟩  := (← read).inputCtx
   return ({ fileName, fileMap, src, stx, before, after, msgs, trees }, done)
 

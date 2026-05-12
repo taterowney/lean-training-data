@@ -46,8 +46,8 @@ root = "scripts.goal_comments"
 
 
 [[lean_exe]]
-name = "trace"
-root = "TrainingData.Trace"
+name = "step_tactics"
+root = "TrainingData.StepTactics"
 supportInterpreter = true
 
 
