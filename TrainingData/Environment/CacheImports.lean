@@ -1,16 +1,20 @@
+module
 import Lean
-import Lean.Environment
-import TrainingData.Environment.CacheImportsInitializer
+import all Lean.Environment
+public import Lean.Environment
+import all Lean.ImportingFlag
+public import TrainingData.Environment.CacheImportsInitializer
+import Std.Time
 
 open Lean System Std.Time
 
 public section
 
-open private ImportedModule ImportedModule.parts ImportedModule.irData? ImportedModule.needsData ImportedModule.needsIRTrans ImportedModule.mk
-ImportState.mk ImportState.moduleNameMap ImportState.moduleNames Lean.ImportedModule.mainModule?
-from Lean.Environment
+-- open private ImportedModule ImportedModule.parts ImportedModule.irData? ImportedModule.needsData ImportedModule.needsIRTrans ImportedModule.mk
+-- ImportState.mk ImportState.moduleNameMap ImportState.moduleNames Lean.ImportedModule.mainModule?
+-- from Lean.Environment
 
-open private importingRef runInitializersRef from Lean.ImportingFlag
+-- open private importingRef runInitializersRef from Lean.ImportingFlag
 
 
 
@@ -197,7 +201,7 @@ where
       -- Producer (e.g., Lake) should limit parts to the proper import level.
       pure (arts.oleanParts (inServer := globalLevel ≥ .server))
     else
-      findOLeanParts i.module
+      (_root_.findOLeanParts i.module : ImportStateM (Array FilePath))
     readModuleDataParts' fnames
   loadIR? i := do
     let irFile? ← if let some arts := arts.find? i.module then
@@ -241,27 +245,3 @@ def importModules' (imports : Array Import) (opts : Options) (trustLevel : UInt3
     -- let (_, s, env) ← timeit "importCore" <| ImportStateM'.run (importModulesCore' (globalLevel := level) imports arts) env
     let (_, s) ← ImportStateM.run (importModulesCore' (globalLevel := level) imports arts)
     finalizeImport (leakEnv := leakEnv) (loadExts := loadExts) (level := level) s imports opts trustLevel
-
-
-
-
-/-
-Mathlib.LinearAlgebra.RootSystem.Basic:250:38: error: Application type mismatch: The argument
-  root
-has type
-  ι ↪ M
-of sort `Type (max u_1 u_3)` but is expected to have type
-  M
-of sort `Type u_3` in the application
-  (RootPairing.equiv_of_mapsTo p) root
-, Mathlib.LinearAlgebra.RootSystem.Basic:246:4: error: (kernel) declaration has metavariables 'RootPairing.mk'''
-])
-[RootSystem.mk'] (#[])
-[] (#[Mathlib.LinearAlgebra.RootSystem.Basic:258:5: error: Function expected at
-  mk'' p root coroot hp hs
-but this term has type
-  RootPairing ι k M N
-
-Note: Expected a function because this term is being applied to the argument
-  hsp
--/

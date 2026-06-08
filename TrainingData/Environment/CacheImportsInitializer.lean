@@ -1,10 +1,11 @@
+module
+import all Lean.Environment
+public import Lean.Attributes
 import Lean
-import Batteries.Tactic.OpenPrivate
+
+public section
 
 open Lean System
-
-
-open private ImportState.mk from Lean.Environment
 
 
 initialize oleanPathCache : IO.Ref (Std.HashMap Name FilePath) ← IO.mkRef {}
@@ -15,3 +16,5 @@ def updateOleanPathCache (mod : Name) (path : FilePath) : IO Unit := do
 
 def updateModuleDataCache (path : System.FilePath) (data : ModuleData × CompactedRegion) : IO Unit := do
   moduleDataCache.modify (·.insert path data)
+
+end
