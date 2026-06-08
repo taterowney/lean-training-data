@@ -1,6 +1,10 @@
-import Lean
+module
+
+public import Lean
 
 open Lean Meta Elab
+
+public section
 
 namespace Lean.Expr
 

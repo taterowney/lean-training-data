@@ -1,4 +1,8 @@
-import TrainingData.InfoTree.Basic
+module
+public import TrainingData.InfoTree.Basic
+
+
+public section
 
 /-!
 # Exporting an `InfoTree` as Json

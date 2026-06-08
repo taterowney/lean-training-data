@@ -1,11 +1,15 @@
+module
 /-
 Copyright (c) 2023 Scott Morrison. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Scott Morrison
 -/
-import Lean.Elab.Frontend
-import Batteries.Data.MLList.Basic
-import Lake
+public import Lean.Elab.Frontend
+public import Lean.Attributes
+public import Batteries.Data.MLList.Basic
+public import Lake
+
+public section
 
 /-!
 # Compiling Lean sources to obtain `Environment`, `Message`s and `InfoTree`s.
@@ -336,3 +340,7 @@ def compileModule (mod : Name) : IO (List CompilationStep) := do
 def moduleInfoTrees (mod : Name) : IO (List InfoTree) := do
   let steps ← compileModule mod
   return steps.flatMap (fun c => c.trees)
+
+end Lean.Elab.IO
+
+end

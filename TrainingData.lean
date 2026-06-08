@@ -1,4 +1,4 @@
-import TrainingData.Frontend
-import TrainingData.InfoTree.Basic
-import TrainingData.InfoTree.ToJson
-import TrainingData.ExampleTactic
+module
+public import TrainingData.Frontend
+public import TrainingData.InfoTree.Basic
+public import TrainingData.InfoTree.ToJson

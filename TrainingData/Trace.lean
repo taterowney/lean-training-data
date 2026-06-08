@@ -1,9 +1,12 @@
-import TrainingData.Frontend
-import TrainingData.Environment.CacheImports
-import TrainingData.InfoTree.Basic
-import TrainingData.Normalize
-import Cli
+module
 
+public import TrainingData.Frontend
+public import TrainingData.Environment.CacheImports
+public import TrainingData.InfoTree.Basic
+public import TrainingData.Normalize
+public import Cli
+
+public section
 
 open Lean IO System Lean.Elab.IO
 
