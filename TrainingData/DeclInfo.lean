@@ -15,10 +15,6 @@ unsafe def loadProject (projectName : Name := `Mathlib) : IO Environment := do
   initSearchPath (← findSysroot)
   importModules #[projectName] {} (loadExts := true)
 
-def Lean.ConstantInfo.isTheorem (ci : ConstantInfo) : Bool :=
-  match ci with
-  | .thmInfo _ => true
-  | _ => false
 
 def Lean.ConstantInfo.getModule (ci : ConstantInfo) (env : Environment) : Name := Id.run do
   let some idx := env.getModuleIdxFor? ci.name | return .anonymous
