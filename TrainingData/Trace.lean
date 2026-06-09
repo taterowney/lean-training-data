@@ -63,6 +63,7 @@ unsafe def traceModules (root : Name) (skipMeta := true)
 
   let out := MLList.ofArray (m := IO) (← collectDependenciesParsed root predicate) |>.mapM
     fun (root, imports, src) => do
+      enableInitializersExecution
       let env ← importModules' imports {} (loadExts := true) (level := OLeanLevel.exported)
       let src := removeHeader (← src)
       return (root, processInput' src env (fileName := root.toString))
