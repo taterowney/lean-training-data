@@ -96,11 +96,11 @@ def getOpenNamespaces (src : String) : Array Name :=
         let mut out := #[]
         for part in ns do
           if part.isEmpty || part == "in" then break
-          out := out.push part.toName
+          out := out.push part.trimAscii.toName
         some out
       else
         none)
-    |>.flatten.dedup
+    |>.flatten.dedup.filter (!Name.isAnonymous ·)
 
 
 def getImports (src : String) : Array Name :=
