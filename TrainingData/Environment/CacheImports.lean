@@ -10,13 +10,6 @@ open Lean System Std.Time
 
 public section
 
--- open private ImportedModule ImportedModule.parts ImportedModule.irData? ImportedModule.needsData ImportedModule.needsIRTrans ImportedModule.mk
--- ImportState.mk ImportState.moduleNameMap ImportState.moduleNames Lean.ImportedModule.mainModule?
--- from Lean.Environment
-
--- open private importingRef runInitializersRef from Lean.ImportingFlag
-
-
 
 /-- Find the compiled `.olean` of a module in the `LEAN_PATH` search path. Caches results. -/
 partial def findOLean' (mod : Name) : ImportStateM FilePath := do

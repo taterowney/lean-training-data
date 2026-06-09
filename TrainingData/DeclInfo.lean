@@ -1,24 +1,23 @@
 module
 
-
 public import Lean
 public import Lean.DeclarationRange
 public import Cli
 public import Mathlib.Data.Real.Basic
-public import TrainingData.Frontend
+
+public import TrainingData.Utils.Frontend
+public import TrainingData.Utils.Array
+public import TrainingData.Utils.ConstantInfo
+public import TrainingData.Utils.DeclarationRange
 
 public section
 open Lean Json Cli
 
 unsafe def loadProject (projectName : Name := `Mathlib) : IO Environment := do
   enableInitializersExecution
-  initSearchPath (← findSysroot)
+  initMetaSearchPath
   importModules #[projectName] {} (loadExts := true)
 
-
-def Lean.ConstantInfo.getModule (ci : ConstantInfo) (env : Environment) : Name := Id.run do
-  let some idx := env.getModuleIdxFor? ci.name | return .anonymous
-  env.allImportedModuleNames[idx]!
 
 def defaultExcludedRoots : Array String :=
   #["Lean", "Init", "Std", "Batteries", "Qq", "Aesop", "_private"]
@@ -47,41 +46,12 @@ def isNontrivialDecl
     (name : Name)
     (ci : ConstantInfo) : Bool :=
   let declRoot := name.getRoot.toString
-  let modRoot := (ci.getModule env).getRoot.toString
+  let modRoot := (ci.getModule' env).getRoot.toString
   !(excludedRoots.contains declRoot) &&
     (ConstantInfo.isDefinition ci || ConstantInfo.isTheorem ci) &&
     !(excludedRoots.contains modRoot) &&
-    -- (ci.name.components.getLast?.bind (fun last => if last.isStr && last.getString!.startsWith "_" then some false else some true)).getD true && -- last component of name shouldn't start with underscore
-    !(ci.name.isInternalOrNum) &&
-    !(ci.name.isInaccessibleUserName) &&
-    !(ci.name.isAnonymous)
+    !ci.isInternal
 
-
-def findDeclarationRangesCore?' [Monad m] (env : Environment) (declName : Name) : m (Option DeclarationRanges) :=
-  -- In the case of private definitions imported via `import all`, looking in `.olean.server` is not
-  -- sufficient, so we look in the actual environment as well via `exported` (TODO: rethink
-  -- parameter naming).
-  return declRangeExt.find? (level := .exported) env declName <|>
-    declRangeExt.find? (level := .server) env declName
-
-def findDeclarationRanges?' [Monad m] [MonadLiftT BaseIO m] (env : Environment) (declName : Name) : m (Option DeclarationRanges) := do
-  let ranges ← if isAuxRecursor env declName || isNoConfusion env declName || isRecCore env declName then
-    findDeclarationRangesCore?' env declName.getPrefix
-  else
-    findDeclarationRangesCore?' env declName
-  match ranges with
-  | none => return (← builtinDeclRanges.get (m := BaseIO)).find? declName
-  | some _ => return ranges
-
-
-def Array.dedup {α : Type} [BEq α]  (arr : Array α) : Array α := Id.run do
-  let mut seen := #[]
-  let mut out := #[]
-  for x in arr do
-    if !seen.contains x then
-      seen := seen.push x
-      out := out.push x
-  out
 
 
 /-- Simple heuristic to obtain the open namespaces from a source string. Overshoots since it doesn't account for `section`s, `end`s, etc. -/
@@ -133,10 +103,10 @@ unsafe def getConstantsWithSource
 
   env.constants.map₁.foldM (init := ()) fun _ n ci => do
     if isNontrivialDecl excludedRoots env n ci && ci.isTheorem then
-      let modName := ci.getModule env
-      let modSrc := FileMap.ofString (← Lean.Elab.IO.moduleSource' modName)
+      let modName := ci.getModule' env
+      let modSrc := FileMap.ofString (← moduleSource' modName)
 
-      let some src ← findDeclarationRanges?' env n | return ()
+      let some src ← ci.declarationRanges' env | return ()
 
       let start_pos := modSrc.ofPosition src.range.pos
       let end_pos := modSrc.ofPosition src.range.endPos
@@ -147,6 +117,8 @@ unsafe def getConstantsWithSource
 
       let obj := Json.mkObj [("declaration", toJson n), ("source", toJson (declSrc.getD "")), ("openNamespaces", toJson openNamespaces), ("module", modName.toString), ("imports", toJson (getImports aboveSrc))]
       IO.println obj.compress
+
+
 
 /-- Prints the initial goal states of all nontrivial declarations in the project. -/
 unsafe def getDeclsInitialGoalStates

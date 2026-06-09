@@ -1,24 +1,16 @@
 module
 
-public import TrainingData.Frontend
+public import TrainingData.Utils.Frontend
 public import TrainingData.Environment.CacheImports
 public import TrainingData.InfoTree.Basic
 public import TrainingData.Normalize
 public import Cli
+public import TrainingData.Utils.MLList
 
 public section
 
 open Lean IO System Lean.Elab.IO
 
-
-
-
-def Array.deduplicate [BEq α] (arr : Array α) : Array α := Id.run do
-  let mut res : Array α := #[]
-  for elem in arr do
-    unless res.contains elem do
-      res := res.push elem
-  res
 
 /--
 Simpler and faster version of `parseImports`. From `Lean.Elab.ParseImportsFast`
@@ -40,31 +32,6 @@ def Lean.removeHeader (input : String) : String :=
     input
 
 
-namespace MLList
-
-/-- Repeatedly apply a function `f : α → m (Option (α × List β))` to an initial `a : α`,
-accumulating the elements of the resulting `List β` as a single monadic lazy list, and stopping on `none`.
-
-(This variant allows starting with a specified `List β` of elements, as well. )-/
-partial def fixlWith? [Monad m] {α β : Type u} (f : α → m (Option $ α × List β))
-    (s : α) (l : List β) : MLList m β :=
-  thunk fun _ =>
-    match l with
-    | b :: rest => cons b (fixlWith? f s rest)
-    | [] => squash fun _ => do
-      match ← f s with
-      | none => pure nil
-      | some (s', l) =>
-        match l with
-        | b :: rest => pure <| cons b (fixlWith? f s' rest)
-        | [] => pure <| fixlWith? f s' []
-
-/-- Repeatedly apply a function `f : α → m (Option (α × List β))` to an initial `a : α`,
-accumulating the elements of the resulting `List β` as a single monadic lazy list. -/
-def fixl? [Monad m] {α β : Type u} (f : α → m (Option $ α × List β)) (s : α) : MLList m β :=
-  fixlWith? f s []
-
-end MLList
 
 
 /-- From a root module, recursively finds all imported modules, reads their source files, and returns an array of triples of the form (module name, list of imports, source file contents). The `predicate` argument can be used to filter which modules are included.
@@ -77,7 +44,7 @@ where
     if seen.contains root || !predicate root then
       return (acc, seen)
     else
-      let filePath ← Lean.Elab.IO.findLean root
+      let filePath ← findLean' root
       let src ← IO.FS.readFile filePath
       let header ← Lean.parseImports'' src root.toString
       let mut acc := acc.push (root, header.imports, IO.FS.readFile filePath)
@@ -91,6 +58,7 @@ unsafe def traceModules (root : Name) (skipMeta := true)
   (predicate : Name → Bool := fun n => root.getRoot.isPrefixOf n && (!skipMeta || (!n.components.contains `Tactic && !n.components.contains `Lean && !n.components.contains `Std && !n.components.contains `Util))) :
   IO $ MLList IO (Name × MLList IO CompilationStep) := do
   enableInitializersExecution
+  initMetaSearchPath
 
   let out := MLList.ofArray (m := IO) (← collectDependenciesParsed root predicate) |>.mapM
     fun (root, imports, src) => do

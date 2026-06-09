@@ -6,7 +6,8 @@ Authors: Scott Morrison
 -/
 public import Lean.Elab.Frontend
 public import Lean.Attributes
-public import Batteries.Data.MLList.Basic
+public import TrainingData.Utils.MLList
+public import TrainingData.Utils.FindSource
 public import Lake
 
 public section
@@ -44,24 +45,7 @@ set_option autoImplicit true
 
 open Lean Elab Frontend Meta
 
-namespace MLList
 
-/-- Run a lazy list in a `ReaderT` monad on some fixed state. -/
-partial def runReaderT [Monad m] (L : MLList (ReaderT.{u, u} ρ m) α) (r : ρ) : MLList m α :=
-  squash fun _ =>
-    return match ← (uncons L).run r with
-    | none => nil
-    | some (a, L') => cons a (L'.runReaderT r)
-
-/-- Run a lazy list in a `StateRefT'` monad on some initial state. -/
-partial def runStateRefT [Monad m] [MonadLiftT (ST ω) m] (L : MLList (StateRefT' ω σ m) α) (s : σ) :
-    MLList m α :=
-  squash fun _ =>
-    return match ← (uncons L).run s with
-    | (none, _) => nil
-    | (some (a, L'), s') => cons a (L'.runStateRefT s')
-
-end MLList
 
 private def isInternal' (declName : Name) : Bool :=
   declName.isInternal ||
@@ -223,98 +207,10 @@ def processInput (input : String) (env? : Option Environment := none)
   | some { after, .. } =>
     return (after, steps.flatMap CompilationStep.msgs, steps.flatMap CompilationStep.trees)
 
-open System
-
--- -- TODO allow finding Lean 4 sources from the toolchain.
--- def findLean (mod : Name) : IO FilePath := do
---   return FilePath.mk ((← findOLean mod).toString.replace ".lake/build/lib/lean" "") |>.withExtension "lean"
-
-
-open Lake
-def packagesDir : FilePath :=
-  if Lake.defaultPackagesDir == "packages"  then
-    ".lake" / Lake.defaultPackagesDir
-  else
-    Lake.defaultPackagesDir
-
-/--
-Return the path of `path` relative to `parent`.
--/
-def relativeTo (path parent : FilePath) : Option FilePath :=
-  let rec componentsRelativeTo (pathComps parentComps : List String) : Option FilePath :=
-    match pathComps, parentComps with
-    | _, [] => mkFilePath pathComps
-    | [], _ => none
-    | (h₁ :: t₁), (h₂ :: t₂) =>
-      if h₁ == h₂ then
-        componentsRelativeTo t₁ t₂
-      else
-        none
-
-    componentsRelativeTo path.components parent.components
-
-
-/--
-Convert the path `path` to an absolute path.
--/
-def toAbsolute (path : FilePath) : IO FilePath := do
-  if path.isAbsolute then
-    pure path
-  else
-    let cwd ← IO.currentDir
-    pure $ cwd / path
-
-/--
-Return the *.lean file corresponding to a module name. Credit to LeanDojo
--/
-def findLean (mod : Name) : IO FilePath := do
-  let modStr := mod.toString
-  if modStr.startsWith "«lake-packages»." then
-    return FilePath.mk (modStr.replace "«lake-packages»" "lake-packages" |>.replace "." "/") |>.withExtension "lean"
-  if modStr.startsWith "«.lake»." then
-    return FilePath.mk (modStr.replace "«.lake»" ".lake" |>.replace "." "/") |>.withExtension "lean"
-  if modStr == "Lake" then
-    return packagesDir / "lean4/src/lean/lake/Lake.lean"
-  let olean ← findOLean mod
-  -- Remove a "build/lib/lean/" substring from the path.
-  let lean := olean.toString.replace ".lake/build/lib/lean/" ""
-    |>.replace "build/lib/lean/" "" |>.replace "lib/lean/Lake/" "lib/lean/lake/Lake/"
-  let mut path := FilePath.mk lean |>.withExtension "lean"
-  let leanLib ← getLibDir (← getBuildDir)
-  if let some p := relativeTo path leanLib then
-    path := packagesDir / "lean4/src/lean" / p
-
-  let cwd ← IO.currentDir
-  if path.isAbsolute then
-    match relativeTo path cwd with
-    | some relativePath => path := relativePath
-    | none => pure ()
-
-  unless ← path.pathExists do
-    throw <| IO.userError s!"Could not find source file for module {mod}, expected at {path}"
-  toAbsolute path
-
-
-/-- Implementation of `moduleSource`, which is the cached version of this function. -/
-def moduleSource' (mod : Name) : IO String := do
-  IO.FS.readFile (← findLean mod)
-
-initialize sourceCache : IO.Ref <| Std.HashMap Name String ←
-  IO.mkRef {}
-
-/-- Read the source code of the named module. The results are cached. -/
-def moduleSource (mod : Name) : IO String := do
-  let m ← sourceCache.get
-  match m[mod]? with
-  | some r => return r
-  | none => do
-    let v ← moduleSource' mod
-    sourceCache.set (m.insert mod v)
-    return v
 
 /-- Implementation of `compileModule`, which is the cached version of this function. -/
 def compileModule' (mod : Name) : MLList IO CompilationStep := do
-  Lean.Elab.IO.processInput' (← moduleSource mod) none {} (← findLean mod).toString
+  Lean.Elab.IO.processInput' (← moduleSource mod) none {} (← findLean' mod).toString
 
 initialize compilationCache : IO.Ref <| Std.HashMap Name (List CompilationStep) ←
   IO.mkRef {}

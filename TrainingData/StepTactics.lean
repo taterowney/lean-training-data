@@ -1,5 +1,5 @@
 module
-public import TrainingData.Frontend
+public import TrainingData.Utils.Frontend
 public import TrainingData.InfoTree.Basic
 public import TrainingData.Trace
 public import TrainingData.Normalize
@@ -18,7 +18,7 @@ def printAndFlush (s : String) : IO Unit := do
 namespace Lean.Elab.IO
 
 unsafe def traceTacticInfos (root : Name) : IO UInt32 := do
-  initSearchPath (← findSysroot)
+  initMetaSearchPath
   IO.eprintln s!"[step_tactics] collecting dependencies for {root}..."
   (← IO.getStderr).flush
   let mods ← traceModules root
