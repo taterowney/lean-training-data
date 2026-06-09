@@ -1,8 +1,13 @@
-import Lean
-import Cli
-import Mathlib.Data.Real.Basic
+module
 
 
+public import Lean
+public import Lean.DeclarationRange
+public import Cli
+public import Mathlib.Data.Real.Basic
+public import TrainingData.Frontend
+
+public section
 open Lean Json Cli
 
 unsafe def loadProject (projectName : Name := `Mathlib) : IO Environment := do
@@ -39,6 +44,7 @@ def excludedRootsFrom (p : Parsed) : Std.HashSet String := Id.run do
       roots
   roots.foldl (init := ({} : Std.HashSet String)) fun acc root => acc.insert root
 
+
 def isNontrivialDecl
     (excludedRoots : Std.HashSet String)
     (env : Environment)
@@ -48,7 +54,59 @@ def isNontrivialDecl
   let modRoot := (ci.getModule env).getRoot.toString
   !(excludedRoots.contains declRoot) &&
     (ConstantInfo.isDefinition ci || ConstantInfo.isTheorem ci) &&
-    !(excludedRoots.contains modRoot)
+    !(excludedRoots.contains modRoot) &&
+    -- (ci.name.components.getLast?.bind (fun last => if last.isStr && last.getString!.startsWith "_" then some false else some true)).getD true && -- last component of name shouldn't start with underscore
+    !(ci.name.isInternalOrNum) &&
+    !(ci.name.isInaccessibleUserName) &&
+    !(ci.name.isAnonymous)
+
+
+def findDeclarationRangesCore?' [Monad m] (env : Environment) (declName : Name) : m (Option DeclarationRanges) :=
+  -- In the case of private definitions imported via `import all`, looking in `.olean.server` is not
+  -- sufficient, so we look in the actual environment as well via `exported` (TODO: rethink
+  -- parameter naming).
+  return declRangeExt.find? (level := .exported) env declName <|>
+    declRangeExt.find? (level := .server) env declName
+
+def findDeclarationRanges?' [Monad m] [MonadLiftT BaseIO m] (env : Environment) (declName : Name) : m (Option DeclarationRanges) := do
+  let ranges ← if isAuxRecursor env declName || isNoConfusion env declName || isRecCore env declName then
+    findDeclarationRangesCore?' env declName.getPrefix
+  else
+    findDeclarationRangesCore?' env declName
+  match ranges with
+  | none => return (← builtinDeclRanges.get (m := BaseIO)).find? declName
+  | some _ => return ranges
+
+
+def Array.dedup {α : Type} [BEq α]  (arr : Array α) : Array α := Id.run do
+  let mut seen := #[]
+  let mut out := #[]
+  for x in arr do
+    if !seen.contains x then
+      seen := seen.push x
+      out := out.push x
+  out
+
+
+/-- Simple heuristic to obtain the open namespaces from a source string. Overshoots since it doesn't account for `section`s, `end`s, etc. -/
+def getOpenNamespaces (src : String) : Array Name :=
+  src.splitOn "\n" |>.toArray
+    |>.filterMap (fun line => Id.run do
+      let trimmed := line.trimAscii.toString
+      if trimmed.startsWith "open " || trimmed.startsWith "namespace " then
+        let mut ns := trimmed.splitOn " " |>.drop 1
+        if ns[0]? == "scoped" then ns := ns.drop 1
+
+        let mut out := #[]
+        for part in ns do
+          if part.isEmpty || part == "in" then break
+          out := out.push part.toName
+        some out
+      else
+        none)
+    |>.flatten.dedup
+
+
 
 /-- Prints all nontrivial declarations in the project. -/
 unsafe def getConstants
@@ -58,6 +116,29 @@ unsafe def getConstants
   env.constants.map₁.foldM (init := ()) fun _ n ci => do
     if isNontrivialDecl excludedRoots env n ci then
       let obj := Json.mkObj [("declaration", toJson n)]
+      IO.println obj.compress
+
+unsafe def getConstantsWithSource
+    (projectName : Name := `Mathlib)
+    (excludedRoots : Std.HashSet String := defaultExcludedRootSet) : IO Unit := do
+
+  let env ← loadProject projectName
+
+  env.constants.map₁.foldM (init := ()) fun _ n ci => do
+    if isNontrivialDecl excludedRoots env n ci && ci.isTheorem then
+      let modName := ci.getModule env
+      let modSrc := FileMap.ofString (← Lean.Elab.IO.moduleSource' modName)
+
+      let some src ← findDeclarationRanges?' env n | return ()
+
+      let start_pos := modSrc.ofPosition src.range.pos
+      let end_pos := modSrc.ofPosition src.range.endPos
+      let declSrc := some <| (modSrc.source.toRawSubstring.extract start_pos end_pos).toString
+
+      let aboveSrc := (modSrc.source.toRawSubstring.extract 0 start_pos).toString
+      let openNamespaces := getOpenNamespaces aboveSrc
+
+      let obj := Json.mkObj [("declaration", toJson n), ("source", toJson (declSrc.getD "")), ("openNamespaces", toJson openNamespaces)]
       IO.println obj.compress
 
 /-- Prints the initial goal states of all nontrivial declarations in the project. -/
@@ -169,6 +250,11 @@ def runConstantsCmd (p : Parsed) : IO UInt32 := do
   unsafe getConstants projectName excludedRoots
   return 0
 
+def runConstantsWithSrcCmd (p : Parsed) : IO UInt32 := do
+  let (projectName, excludedRoots) := loadCliConfig p
+  unsafe getConstantsWithSource projectName excludedRoots
+  return 0
+
 def runGoalStatesCmd (p : Parsed) : IO UInt32 := do
   let (projectName, excludedRoots) := loadCliConfig p
   unsafe getDeclsInitialGoalStates projectName excludedRoots
@@ -194,7 +280,23 @@ def constantsCmd : Cmd := `[Cli|
   "Print each nontrivial declaration as newline-delimited JSON. Output format: JSON objects with fields `declaration` and `type`."
 
   FLAGS:
-    p, project : String;        "Root module to inspect (for example: `Mathlib`, `AutoTactic`)."
+    p, project : String;        "Root module to inspect (for example: `Mathlib`)."
+    e, "exclude-roots" : Array String; "Root namespaces/modules to filter out (comma-separated list)."
+    "include-private";         "Include declarations rooted at `_private` even if listed in `--exclude-roots`."
+
+  EXTENSIONS:
+    defaultValues! #[
+      ("project", "Mathlib"),
+      ("exclude-roots", "Lean,Init,Std,Batteries,Qq,Aesop,_private")
+    ]
+]
+
+def constantsAndSrcCmd : Cmd := `[Cli|
+  constants_with_src VIA runConstantsWithSrcCmd;
+  "Print each nontrivial declaration together with its source code as newline-delimited JSON. Output format: JSON objects with fields `declaration` and `source`."
+
+  FLAGS:
+    p, project : String;        "Root module to inspect (for example: `Mathlib`)."
     e, "exclude-roots" : Array String; "Root namespaces/modules to filter out (comma-separated list)."
     "include-private";         "Include declarations rooted at `_private` even if listed in `--exclude-roots`."
 
@@ -210,7 +312,7 @@ def goalStatesCmd : Cmd := `[Cli|
   "Print each nontrivial declaration and its type as newline-delimited JSON. Output format: JSON objects with fields `declaration` and `type`."
 
   FLAGS:
-    p, project : String;        "Root module to inspect (for example: `Mathlib`, `AutoTactic`)."
+    p, project : String;        "Root module to inspect (for example: `Mathlib`)."
     e, "exclude-roots" : Array String; "Root namespaces/modules to filter out (comma-separated list)."
     "include-private";         "Include declarations rooted at `_private` even if listed in `--exclude-roots`."
 
@@ -226,7 +328,7 @@ def relativeDirectoryCmd : Cmd := `[Cli|
   "Compare declaration pairs by shared directory-prefix depth in their defining modules. Output is newline-delimited JSON with fields `declaration1`, `declaration2`, and `relativeDirectory` (a nonnegative integer)."
 
   FLAGS:
-    p, project : String;        "Root module to inspect (for example: `Mathlib`, `AutoTactic`)."
+    p, project : String;        "Root module to inspect (for example: `Mathlib`)."
     e, "exclude-roots" : Array String; "Root namespaces/modules to filter out (comma-separated list)."
     "include-private";         "Include declarations rooted at `_private` even if listed in `--exclude-roots`."
 
@@ -242,7 +344,7 @@ def relativeDependenciesCmd : Cmd := `[Cli|
   "Compare declaration pairs by shared dependency overlap (Jaccard-style ratio). Output format: newline-delimited JSON with fields `declaration1`, `declaration2`, and `relativeDependencies` (a float between 0 and 1)."
 
   FLAGS:
-    p, project : String;        "Root module to inspect (for example: `Mathlib`, `AutoTactic`)."
+    p, project : String;        "Root module to inspect (for example: `Mathlib`)."
     e, "exclude-roots" : Array String; "Root namespaces/modules to filter out (comma-separated list)."
     "include-private";         "Include declarations rooted at `_private` even if listed in `--exclude-roots`."
 
@@ -258,7 +360,7 @@ def declFrequenciesCmd : Cmd := `[Cli|
   "Count how many times each declaration is used as a dependency across the project. Output format: a single JSON object mapping declaration names to usage counts."
 
   FLAGS:
-    p, project : String;        "Root module to inspect (for example: `Mathlib`, `AutoTactic`)."
+    p, project : String;        "Root module to inspect (for example: `Mathlib`)."
     e, "exclude-roots" : Array String; "Root namespaces/modules to filter out (comma-separated list)."
     "include-private";         "Include declarations rooted at `_private` even if listed in `--exclude-roots`."
 
@@ -275,6 +377,7 @@ def declInfoCmd : Cmd := `[Cli|
 
   SUBCOMMANDS:
     constantsCmd;
+    constantsAndSrcCmd;
     goalStatesCmd;
     relativeDirectoryCmd;
     relativeDependenciesCmd;
