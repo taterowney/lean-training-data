@@ -179,6 +179,11 @@ nothing is gauranteed.
 def processInput' (input : String) (env? : Option Environment := none)
     (opts : Options := {}) (fileName : Option String := none) (info : Bool := true) :
     MLList IO CompilationStep := unsafe do
+  if input.contains "set_option backward.privateInPublic true" then
+    IO.eprintln "[warning] Detected `set_option backward.privateInPublic true`, which causes signficant slowdowns while processing. Skipping the elaboration of declarations in this module. This should hopefully not appear once Mathlib is fully ported to the module system."
+    (← IO.getStderr).flush
+    .nil
+
   let fileName   := fileName.getD "<input>"
   let inputCtx   := Parser.mkInputContext input fileName
   let (parserState, commandState) ← match env? with

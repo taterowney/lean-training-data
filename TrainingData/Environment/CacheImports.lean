@@ -46,7 +46,7 @@ def readModuleData' (fname : System.FilePath) : ImportStateM (ModuleData × Comp
   match (← moduleDataCache.get).get? fname with
   | some data => pure data
   | none =>
-    let new := (← readModuleData fname)
+    let new ← readModuleData fname
     updateModuleDataCache fname new
     return new
 
@@ -235,6 +235,5 @@ def importModules' (imports : Array Import) (opts : Options) (trustLevel : UInt3
 
   withImporting do
     plugins.forM Lean.loadPlugin
-    -- let (_, s, env) ← timeit "importCore" <| ImportStateM'.run (importModulesCore' (globalLevel := level) imports arts) env
     let (_, s) ← ImportStateM.run (importModulesCore' (globalLevel := level) imports arts)
     finalizeImport (leakEnv := leakEnv) (loadExts := loadExts) (level := level) s imports opts trustLevel
