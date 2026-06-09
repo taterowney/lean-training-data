@@ -39,16 +39,7 @@ def Lean.removeHeader (input : String) : String :=
 TODO: way to make this lazy so that we don't have to open and close everything twice? -/
 partial def collectDependenciesParsed (root : Name) (predicate : Name → Bool := root.getRoot.isPrefixOf) : IO $ Array $ Name × Array Import × IO String := do
   let (out, _) ← go root predicate #[] {}
-
-  let mut out := out
-  let mut mod := #[]
-  for (modName, imports, src) in out do
-    if modName == `Mathlib.Algebra.Lie.Cochain then
-      IO.println s!"Found {modName} with {imports.size} imports"
-      mod := mod.push (modName, imports, src)
-    else
-      out := out.push (modName, imports, src)
-  return mod ++ out
+  return out
 where
   go root predicate acc (seen : Std.HashSet Name) : IO (Array (Name × Array Import × IO String) × Std.HashSet Name) := do
     if seen.contains root || !predicate root then
