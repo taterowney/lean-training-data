@@ -103,6 +103,16 @@ def getOpenNamespaces (src : String) : Array Name :=
     |>.flatten.dedup
 
 
+def getImports (src : String) : Array Name :=
+  src.splitOn "\n" |>.toArray
+    |>.filterMap (fun line => Id.run do
+      let trimmed := line.trimAscii.toString
+      if trimmed.startsWith "import " || trimmed.contains " import " then
+        let imp := (trimmed.splitOn "import")[1]!.trimAscii.toString
+        some imp.toName
+      else
+        none)
+
 
 /-- Prints all nontrivial declarations in the project. -/
 unsafe def getConstants
@@ -113,6 +123,7 @@ unsafe def getConstants
     if isNontrivialDecl excludedRoots env n ci then
       let obj := Json.mkObj [("declaration", toJson n)]
       IO.println obj.compress
+
 
 unsafe def getConstantsWithSource
     (projectName : Name := `Mathlib)
@@ -134,7 +145,7 @@ unsafe def getConstantsWithSource
       let aboveSrc := (modSrc.source.toRawSubstring.extract 0 start_pos).toString
       let openNamespaces := getOpenNamespaces aboveSrc
 
-      let obj := Json.mkObj [("declaration", toJson n), ("source", toJson (declSrc.getD "")), ("openNamespaces", toJson openNamespaces)]
+      let obj := Json.mkObj [("declaration", toJson n), ("source", toJson (declSrc.getD "")), ("openNamespaces", toJson openNamespaces), ("module", modName.toString), ("imports", toJson (getImports aboveSrc))]
       IO.println obj.compress
 
 /-- Prints the initial goal states of all nontrivial declarations in the project. -/
