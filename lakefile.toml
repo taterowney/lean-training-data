@@ -50,6 +50,10 @@ name = "step_tactics"
 root = "TrainingData.StepTactics"
 supportInterpreter = true
 
+[[lean_exe]]
+name = "step_tactics_in_module"
+root = "TrainingData.StepTacticsInModule"
+supportInterpreter = true
 
 [[lean_exe]]
 name = "declinfo"

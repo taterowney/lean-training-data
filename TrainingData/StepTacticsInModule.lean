@@ -21,7 +21,7 @@ unsafe def traceTacticInfos (root : Name) : IO UInt32 := do
   initMetaSearchPath
   IO.eprintln s!"[step_tactics] collecting dependencies for {root}..."
   (← IO.getStderr).flush
-  let mods ← traceProject root
+  let mods ← traceModules #[root]
   IO.eprintln s!"[step_tactics] processing modules..."
   (← IO.getStderr).flush
   for (mod, steps) in mods do
@@ -56,13 +56,13 @@ unsafe def stepTacticsMain (p : Parsed) : IO UInt32 := do
   Lean.Elab.IO.traceTacticInfos root.toName
 
 unsafe def mainCmd : Cmd := `[Cli|
-  "step_tactics" VIA stepTacticsMain;
+  "step_tactics_in_module" VIA stepTacticsMain;
   "Emit per-tactic training data (context, goal before/after, tactic text) as JSON lines."
 
   ARGS:
     module : String; "Root module to trace (default: Mathlib)."
 ]
 
-/-- `lake exe step_tactics` -/
+/-- `lake exe step_tactics_in_module` -/
 def main (args : List String) : IO UInt32 :=
   unsafe mainCmd.validate args

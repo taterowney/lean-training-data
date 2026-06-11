@@ -33,6 +33,11 @@ def Lean.removeHeader (input : String) : String :=
     input
 
 
+def collectModuleParsed (mod : Name) : IO (Name × Array Import × IO String) := do
+  let filePath ← findLean' mod
+  let src ← IO.FS.readFile filePath
+  let header ← Lean.parseImports'' src mod.toString
+  return (mod, header.imports, IO.FS.readFile filePath)
 
 
 /-- From a root module, recursively finds all imported modules, reads their source files, and returns an array of triples of the form (module name, list of imports, source file contents). The `predicate` argument can be used to filter which modules are included.
@@ -45,23 +50,36 @@ where
     if seen.contains root || !predicate root then
       return (acc, seen)
     else
-      let filePath ← findLean' root
-      let src ← IO.FS.readFile filePath
-      let header ← Lean.parseImports'' src root.toString
-      let mut acc := acc.push (root, header.imports, IO.FS.readFile filePath)
+      let new ← collectModuleParsed root
+      let mut acc := acc.push new
       let mut seen := seen.insert root
-      for imp in header.imports do
+
+      let imports := new.2.1
+      for imp in imports do
         (acc, seen) ← go imp.module predicate acc seen
       return (acc, seen)
 
 /-- Recursively traces the modules starting from a root module, optionally skipping meta modules. -/
-unsafe def traceModules (root : Name) (skipMeta := true)
+unsafe def traceProject (root : Name) (skipMeta := true)
   (predicate : Name → Bool := fun n => root.getRoot.isPrefixOf n && (!skipMeta || (!n.components.contains `Tactic && !n.components.contains `Lean && !n.components.contains `Std && !n.components.contains `Util))) :
   IO $ MLList IO (Name × MLList IO CompilationStep) := do
   enableInitializersExecution
   initMetaSearchPath
 
   let out := MLList.ofArray (m := IO) (← collectDependenciesParsed root predicate) |>.mapM
+    fun (root, imports, src) => do
+      enableInitializersExecution
+      let env ← importModules' imports {} (loadExts := true) (level := OLeanLevel.exported)
+      let src := removeHeader (← src)
+      return (root, processInput' src env (fileName := root.toString))
+  pure out
+
+unsafe def traceModules (mods : Array Name) :
+  IO $ MLList IO (Name × MLList IO CompilationStep) := do
+  enableInitializersExecution
+  initMetaSearchPath
+
+  let out := MLList.ofArray (m := IO) (← mods.mapM collectModuleParsed) |>.mapM
     fun (root, imports, src) => do
       enableInitializersExecution
       let env ← importModules' imports {} (loadExts := true) (level := OLeanLevel.exported)
