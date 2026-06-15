@@ -18,6 +18,7 @@ partial def findOLean' (mod : Name) : ImportStateM FilePath := do
   | none => do
   let sp ← searchPathRef.get
   if let some fname ← sp.findWithExt "olean" mod then
+    updateOleanPathCache mod fname
     return fname
   else
     let pkg := FilePath.mk <| mod.getRoot.toString (escape := false)
@@ -70,7 +71,8 @@ def readModuleDataParts' (fnames : Array System.FilePath) : ImportStateM (Array 
 
 partial def importModulesCore'
     (imports : Array Import) (globalLevel : OLeanLevel := .private)
-    (arts : NameMap ImportArtifacts := {}) (isExported : Bool := globalLevel < .private)  :
+    (arts : NameMap ImportArtifacts := {}) (isExported : Bool := globalLevel < .private)
+    (missesRef : IO.Ref Nat) :
     ImportStateM Unit := do
   go imports (importAll := true) (isExported := isExported) (needsData := true) (needsIRTrans := false)
   if globalLevel < .private then
@@ -189,25 +191,40 @@ where
       modify fun (s : ImportState) =>
         ImportState.mk (ImportState.moduleNameMap s |>.insert i.module mod) ((ImportState.moduleNames s).push i.module)
   loadData i := do
+
     let fnames ← if let some arts := arts.find? i.module then
       -- Opportunistically load all available parts.
       -- Producer (e.g., Lake) should limit parts to the proper import level.
       pure (arts.oleanParts (inServer := globalLevel ≥ .server))
     else
       (_root_.findOLeanParts i.module : ImportStateM (Array FilePath))
+    -- Count this module as a cache miss if any of its parts are not already cached.
+    let cache ← moduleDataCache.get
+    if fnames.any (!cache.contains ·) then
+      missesRef.modify (· + 1)
+
+    updateLoadedModulesCache i.module fnames
+
     readModuleDataParts' fnames
   loadIR? i := do
+
     let irFile? ← if let some arts := arts.find? i.module then
       pure arts.ir?
     else
       let irFile := (← findOLean' i.module).withExtension "ir"
       pure (guard (← irFile.pathExists) *> irFile)
-    irFile?.mapM (readModuleData' ·)
+
+    match irFile? with
+    | some irFile =>
+      updateLoadedModulesCache i.module #[irFile]
+      readModuleData' irFile
+    | none => pure none
+
 
 
 
 /--
-Creates environment object from given imports.
+Creates environment object from given imports; caches results for future calls.
 
 If `leakEnv` is true, we mark the environment as persistent, which means it will not be freed. We
 set this when the object would survive until the end of the process anyway. In exchange, RC updates
@@ -224,16 +241,75 @@ If `level` is `exported`, the module to be elaborated is assumed to be participa
 system and imports will be restricted accordingly. If it is `server`, the data for
 `getModuleEntries (includeServer := true)` is loaded as well. If it is `private`, all data is loaded
 as if no `module` annotations were present in the imports.
+
+Additionally returns the number of module-data cache misses incurred while importing, counting all
+transitively imported dependencies (not just the top-level imports). A module counts as a miss if
+any of its `.olean*` parts were not already present in `moduleDataCache` and thus had to be read
+from disk.
+-/
+def importModulesGetMisses (imports : Array Import) (opts : Options) (trustLevel : UInt32 := 0)
+    (plugins : Array System.FilePath := #[]) (leakEnv := false) (loadExts := false)
+    (level := OLeanLevel.private) (arts : NameMap ImportArtifacts := {})
+    : IO (Environment × Nat) := do
+  for imp in imports do
+    if imp.module matches .anonymous then
+      throw $ IO.userError "import failed, trying to import module with anonymous name"
+
+  let missesRef ← IO.mkRef 0
+  let env ← withImporting do
+    plugins.forM Lean.loadPlugin
+    let (_, s) ← ImportStateM.run (importModulesCore' (globalLevel := level) imports arts (missesRef := missesRef))
+    finalizeImport (leakEnv := leakEnv) (loadExts := loadExts) (level := level) s imports opts trustLevel
+  return (env, ← missesRef.get)
+
+/--
+Creates environment object from given imports; caches results for future calls. See
+`importModulesGetMisses` for the full description of the parameters; this wrapper simply discards
+the cache-miss count.
 -/
 def importModules' (imports : Array Import) (opts : Options) (trustLevel : UInt32 := 0)
     (plugins : Array System.FilePath := #[]) (leakEnv := false) (loadExts := false)
     (level := OLeanLevel.private) (arts : NameMap ImportArtifacts := {})
     : IO Environment := do
-  for imp in imports do
-    if imp.module matches .anonymous then
-      throw $ IO.userError "import failed, trying to import module with anonymous name"
+  let (env, _) ← importModulesGetMisses imports opts trustLevel plugins leakEnv loadExts level arts
+  return env
 
-  withImporting do
-    plugins.forM Lean.loadPlugin
-    let (_, s) ← ImportStateM.run (importModulesCore' (globalLevel := level) imports arts)
-    finalizeImport (leakEnv := leakEnv) (loadExts := loadExts) (level := level) s imports opts trustLevel
+
+/-- Returns the names of all modules currently cached in memory for fast importing. -/
+def getCachedModules : IO (Array Name) := do
+  let mods ← loadedModules.get
+  return mods.keysArray
+
+
+/-- Frees the memory associated with the given modules. No environments or any other references can exist to the modules being freed or magical things will begin to happen. -/
+def freeModules (mods_to_free : Array Name) : IO Unit := do
+
+  -- loadedModules stores the module names and which compiled files they correspond to; get all the files we need to free the loaded contents of
+  let paths_to_free := (← loadedModules.get).fold (init := #[]) fun paths mod path_arr =>
+    if mods_to_free.contains mod then
+      paths ++ path_arr
+    else
+      paths
+
+  -- Snapshot the compacted regions to free *before* dropping any reference to the data living inside
+  -- them. `CompactedRegion` is just a base address so it stays
+  -- valid to free after the cache entries holding the corresponding `ModuleData` are gone.
+  let regions_to_free : Array CompactedRegion := (← moduleDataCache.get).fold (init := #[]) fun regions path (_, region) =>
+    if paths_to_free.contains path then
+      regions.push region
+    else
+      regions
+
+  -- Drop *every* cache reference to the freed modules first, while their backing regions are still
+  -- mapped. The `ModuleData` roots live inside those regions, and tearing them down (`lean_dec`)
+  -- reads their object headers, so this must happen before the regions are unmapped below.
+  moduleDataCache.modify (fun cache => cache.filter (fun k _ => !paths_to_free.contains k))
+  loadedModules.modify   (fun s => s.filter (fun m _ => !mods_to_free.contains m))
+  oleanPathCache.modify  (fun s => s.filter (fun m _ => !mods_to_free.contains m))
+
+  -- Now that nothing references the objects inside them, unmap the regions.
+  for region in regions_to_free do
+    unsafe region.free
+
+
+end
