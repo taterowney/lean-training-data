@@ -91,17 +91,35 @@ Process one command, returning a `CompilationStep` and
 def one : FrontendM (CompilationStep × Bool) := do
   let s := (← get).commandState
   let before := s.env
-  let done ← processCommand
-  let stx := (← get).commands.back!
-  let src := Substring.Raw.mk (← read).inputCtx.inputString (← get).cmdPos (← get).parserState.pos
+  -- We inline `Frontend.processCommand` rather than calling it so that we can capture the parser's
+  -- messages (e.g. syntax errors). `processCommand` stores them via `setMessages`, but in Lean 4
+  -- v4.28.0+ `elabCommandTopLevel` resets the per-command message log *before* we could read it
+  -- (see below), so a plain `processCommand` would silently drop every parse-stage error.
+  updateCmdPos
+  let ictx ← getInputContext
+  let pstate ← getParserState
+  let scope := s.scopes.head!
+  let pmctx := { env := s.env, options := scope.opts, currNamespace := scope.currNamespace, openDecls := scope.openDecls }
+  let (cmd, ps, parserMessages) := profileit "parsing" scope.opts fun _ =>
+    Parser.parseCommand ictx pmctx pstate s.messages
+  modify fun st => { st with commands := st.commands.push cmd }
+  setParserState ps
+  setMessages parserMessages
+  -- `parseCommand` appends its messages to the ones passed in (`s.messages`); the new tail is this
+  -- command's parse-stage messages, which `elabCommandTopLevel`'s reset would otherwise discard.
+  let parseMsgs := parserMessages.toList.drop s.messages.toList.length
+  elabCommandAtFrontend cmd
+  let done := Parser.isTerminalCommand cmd
+  let src := Substring.Raw.mk ictx.inputString (← get).cmdPos (← get).parserState.pos
   let s' := (← get).commandState
   let after := s'.env
   -- In Lean 4 v4.28.0+, `elabCommandTopLevel` resets both `messages` and `infoState`
-  -- at the start of each command, so these already contain only this command's data.
-  let msgs := s'.messages.toList
+  -- at the start of each command, so these already contain only this command's elaboration data;
+  -- we prepend the parse-stage messages captured above.
+  let msgs := parseMsgs ++ s'.messages.toList
   let trees := s'.infoState.trees.toList
-  let ⟨_, fileName, fileMap, _, _⟩  := (← read).inputCtx
-  return ({ fileName, fileMap, src, stx, before, after, msgs, trees }, done)
+  let ⟨_, fileName, fileMap, _, _⟩  := ictx
+  return ({ fileName, fileMap, src, stx := cmd, before, after, msgs, trees }, done)
 
 /-- Process all commands in the input. -/
 partial def all : FrontendM (List CompilationStep) := do
@@ -192,15 +210,28 @@ def processInput' (input : String) (env? : Option Environment := none)
 
   let fileName   := fileName.getD "<input>"
   let inputCtx   := Parser.mkInputContext input fileName
-  let (parserState, commandState) ← match env? with
+  let (parserState, commandState, headerMsgs) ← match env? with
   | none => do
     enableInitializersExecution
     let (header, parserState, messages) ← Parser.parseHeader inputCtx
     let (env, messages) ← processHeader header opts messages inputCtx
-    pure (parserState, (Command.mkState env messages opts))
+    pure (parserState, Command.mkState env messages opts, messages.toList)
   | some env => do
-    pure ({ : Parser.ModuleParserState }, Command.mkState env {} opts)
-  compilationSteps inputCtx parserState { commandState with infoState.enabled := info }
+    pure ({ : Parser.ModuleParserState }, Command.mkState env {} opts, [])
+  let steps := compilationSteps inputCtx parserState { commandState with infoState.enabled := info }
+  -- Header/import messages (e.g. failed imports, header syntax errors) are produced before the
+  -- first command and would be wiped by `elabCommandTopLevel`'s per-command message reset, so
+  -- surface them up front as a synthetic step rather than dropping them.
+  if headerMsgs.isEmpty then
+    steps
+  else
+    let headerStep : CompilationStep := {
+      fileName, fileMap := inputCtx.fileMap
+      src := Substring.Raw.mk inputCtx.inputString parserState.pos parserState.pos
+      stx := .missing
+      before := commandState.env, after := commandState.env
+      msgs := headerMsgs, trees := [] }
+    .cons headerStep steps
 
 /--
 Process some text input, with or without an existing environment.
