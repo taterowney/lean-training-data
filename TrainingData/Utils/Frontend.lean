@@ -142,6 +142,12 @@ def newDecls (cmd : CompilationStep) : IO (List DeclInfo) := do
       docString := ← findDocString? cmd.after ci.name
     }
 
+def errors (cmd : CompilationStep) : List Message :=
+  cmd.msgs.filter fun m => m.severity == MessageSeverity.error
+
+def hasErrors (cmd : CompilationStep) : Bool :=
+  !(cmd.errors |>.isEmpty)
+
 end CompilationStep
 
 /--
