@@ -31,10 +31,8 @@ partial def parseCommands (input : String) (env : Environment) (ignoreErrors := 
     s := p.run ictx { env, options := {} } (getTokenTable env) s
     let commandRaw := input.toRawSubstring.extract oldPos s.pos |>.toString
     if !s.allErrors.isEmpty then
-      if ignoreErrors then -- TODO: this causes an infinite loop if the first command is malformed, since the parser state doesn't advance at all.
-        acc := (commandRaw, ⟨s.stxStack.back⟩) :: acc
-        oldPos := s.pos
-        continue
+      if ignoreErrors then
+        break -- Can't continue parsing after an error, so just return what we have so far.
       else
         throw <| IO.userError (s.toErrorMsg ictx)
     else
