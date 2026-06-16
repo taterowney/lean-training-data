@@ -60,6 +60,7 @@ def packagesDir : FilePath :=
 Return the *.lean file corresponding to a module name. Credit to LeanDojo.
 -/
 def findLean' (mod : Name) : IO FilePath := do
+  initMetaSearchPath
   let modStr := mod.toString
   if modStr.startsWith "«lake-packages»." then
     return FilePath.mk (modStr.replace "«lake-packages»" "lake-packages" |>.replace "." "/") |>.withExtension "lean"
@@ -70,11 +71,12 @@ def findLean' (mod : Name) : IO FilePath := do
   let olean ← findOLean mod
   -- Remove a "build/lib/lean/" substring from the path.
   let lean := olean.toString.replace ".lake/build/lib/lean/" ""
-    |>.replace "build/lib/lean/" "" |>.replace "lib/lean/Lake/" "lib/lean/lake/Lake/"
+    |>.replace "build/lib/lean/" "" |>.replace "lib/lean/Lake/" "lib/lean/lake/Lake/" |>.replace "lib/lean" "src/lean"
   let mut path := FilePath.mk lean |>.withExtension "lean"
   let leanLib ← getLibDir (← getBuildDir)
+  let leanSrc := (← getBuildDir) / "src" / "lean"
   if let some p := path.relativeTo leanLib then
-    path := packagesDir / "lean4/src/lean" / p
+    path := leanSrc / p
 
   let cwd ← IO.currentDir
   if path.isAbsolute then
