@@ -8,6 +8,7 @@ rev = "v4.30.0"
 
 [[lean_lib]]
 name = "TrainingData"
+precompileModules = true
 
 [[lean_lib]]
 name = "Examples"

@@ -3,7 +3,6 @@ module
 public import Lean
 public import Lean.DeclarationRange
 public import Cli
-public import Mathlib.Data.Real.Basic
 
 public import TrainingData.Utils.Frontend
 public import TrainingData.Utils.Array
