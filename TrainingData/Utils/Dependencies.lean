@@ -5,7 +5,7 @@ public import TrainingData.Utils.FindSource
 public import Lean.Elab.ParseImportsFast
 public import Lake
 -- The umbrella `Lake` does not re-export the workspace loader publicly, so import it directly.
-import Lake.Load.Workspace
+import Lake.Load.Workspace/-!test -/
 
 public section
 
@@ -26,7 +26,7 @@ def Lean.parseImports'' (input : String) (fileName : String) : IO ParseImports.S
 def Lean.removeHeader (input : String) : String :=
   let s := ParseImports.main input (ParseImports.whitespace input {})
   if s.error? == none then
-    input.drop (s.pos.byteIdx - 2) |>.toString -- Idk why we need the `2` here, but it seems to work
+    input.drop (s.pos.byteIdx) |>.toString
   else
     input
 
