@@ -26,7 +26,7 @@ def Lean.parseImports'' (input : String) (fileName : String) : IO ParseImports.S
 def Lean.removeHeader (input : String) : String :=
   let s := ParseImports.main input (ParseImports.whitespace input {})
   if s.error? == none then
-    input.drop (s.pos.byteIdx) |>.toString
+    input.toRawSubstring.extract input.rawStartPos s.pos |>.toString
   else
     input
 
