@@ -31,7 +31,7 @@ unsafe def traceTacticInfos (root : Name) : IO UInt32 := do
       for tree in step.trees do
         for (ti, ctx) in tree.tactics do
           try
-            let (context, goal_before, goal_after) ← ti.pretty' ctx
+            let (context, goal_before, goal_after, src_with_sorry) ← ti.pretty' step.stx ctx
             let tactic := (← ti.pp ctx).pretty (width := 100000000)
             let kind := (ti.name?.getD .anonymous).toString
             let out := Json.mkObj [
@@ -41,7 +41,8 @@ unsafe def traceTacticInfos (root : Name) : IO UInt32 := do
               ("tactic_kind", kind),
               ("context", context.toJson),
               ("goal_before", goal_before),
-              ("goal_after", goal_after)
+              ("goal_after", goal_after),
+              ("src_with_sorry", src_with_sorry)
             ]
             printAndFlush out.compress
           catch _ => continue

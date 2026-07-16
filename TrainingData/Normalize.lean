@@ -74,7 +74,7 @@ partial def traverseDFS {α : Type} [Monad m] (f : α → Expr → m (α × Expr
       return (state, .proj s i e')
     | e => return (state, e)
 
-end Lean.Expr
+
 
 /-- α-rename bound variables to `x0`, `x1`, ... -/
 partial def renameBinders (e : Expr) : MetaM Expr :=
@@ -119,13 +119,24 @@ def render (e : Expr) : MetaM String := do
   let out := out.pretty (width := 100000000)
   return out
 
+end Lean.Expr
 
 namespace Lean.Elab.TacticInfo
 
-/- From a TacticInfo, normalize and serialize the information about a tactic application, giving a list of premises, the current goal before applying the tactic, and the goal after. -/
-def pretty (info : TacticInfo) : MetaM (Array String × String × String) := do
+
+/- From a TacticInfo, normalize and serialize the information about a tactic application, giving a list of premises, the current goal before applying the tactic, the goal after, and the source code with the current tactic replaced with a "sorry". -/
+def pretty (info : TacticInfo) (declStx : Syntax) : MetaM (Array String × String × String × String) := do
   let goal_before_mvar ← info.goalsBefore.head?.getDM (throwError "Assertion failed: no goals")
   let goal_after_mvar := info.goalsAfter.head?
+
+  let srcWithSorry ← declStx.replaceM (fun s => do
+    if s.eqWithInfo info.stx then
+      let out ← `(tactic| sorry)
+      pure (some out)
+    else
+      pure none)
+  let renderedSrc := srcWithSorry.prettyPrint.pretty'
+
 
   goal_before_mvar.withContext do
     let mut n := 0
@@ -143,22 +154,23 @@ def pretty (info : TacticInfo) : MetaM (Array String × String × String) := do
       for premise? in (← getLCtx).decls do
         match premise? with
         | some premise => do
-          let pp ← render (← instantiateMVars premise.type)
+          let pp ← Expr.render (← instantiateMVars premise.type)
           if premise.hasValue then
-            premises := premises.push s!"{premise.userName}: {pp} := {← render (← instantiateMVars premise.value)}\n"
+            premises := premises.push s!"{premise.userName}: {pp} := {← Expr.render (← instantiateMVars premise.value)}\n"
           else
             premises := premises.push s!"{premise.userName}: {pp}\n"
         | none => continue
 
-      let goal_before ← render (← instantiateMVars (← goal_before_mvar.getType))
+      let goal_before ← Expr.render (← instantiateMVars (← goal_before_mvar.getType))
       let goal_after ← match goal_after_mvar with
-      | some g => render (← instantiateMVars (← g.getType))
+      | some g => Expr.render (← instantiateMVars (← g.getType))
       | none => pure "Goals accomplished!"
-      return (premises, goal_before, goal_after)
+      return (premises, goal_before, goal_after, renderedSrc)
+
 
 /- From a TacticInfo, normalize and serialize the information about a tactic application, giving a list of premises, the goal before applying the tactic, and the goal after. Runs from IO, but requires a ContextInfo to set up the MetaM environment -/
-def pretty' (info : TacticInfo) (ctx : ContextInfo) : IO (Array String × String × String) := do
-  ctx.runMetaM {} <| Meta.withMCtx info.mctxBefore <| info.pretty
+def pretty' (info : TacticInfo) (stepStx : Syntax) (ctx : ContextInfo) : IO (Array String × String × String × String) := do
+  ctx.runMetaM {} <| Meta.withMCtx info.mctxBefore <| info.pretty stepStx
 
 end Lean.Elab.TacticInfo
 
