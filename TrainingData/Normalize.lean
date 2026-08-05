@@ -132,7 +132,10 @@ def pretty (info : TacticInfo) (declStx : Syntax) : MetaM (Array String × Strin
   let srcWithSorry ← declStx.replaceM (fun s => do
     if s.eqWithInfo info.stx then
       let out ← `(tactic| sorry)
-      pure (some out)
+      -- Carry over the replaced tactic's whitespace: `prettyPrint` reprints from stored
+      -- `SourceInfo`, so a fresh `sorry` would drop the newline/indentation separating this
+      -- tactic from the next one, running them together on a single (non-parsing) line.
+      pure (some (out.raw.copyHeadTailInfoFrom s))
     else
       pure none)
   let renderedSrc := srcWithSorry.prettyPrint.pretty'
