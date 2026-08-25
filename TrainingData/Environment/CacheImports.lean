@@ -165,16 +165,16 @@ where
         -- when module is already imported, bump flags
         let importAll := importAll || mod.importAll
         let isExported := isExported || mod.isExported
-        let needsData := needsData || ImportedModule.needsData mod
+        let needsData := needsData || mod.hasData
         let needsIRTrans := needsIRTrans || ImportedModule.needsIRTrans mod
         let needsIR := needsIRTrans || importAll
         let irPhases := if irPhases == mod.irPhases then irPhases else .all
         let parts ← if needsData && (ImportedModule.parts mod).isEmpty then loadData i else pure (ImportedModule.parts mod)
         let irData? ← if needsIR && (ImportedModule.irData? mod).isNone then loadIR? i else pure (ImportedModule.irData? mod)
         if importAll != mod.importAll || isExported != mod.isExported ||
-            needsIRTrans != ImportedModule.needsIRTrans mod || needsData != ImportedModule.needsData mod || irPhases != mod.irPhases then
+            needsIRTrans != ImportedModule.needsIRTrans mod || needsData != mod.hasData || irPhases != mod.irPhases then
           modify fun (s : ImportState) =>
-            let impmod := ImportedModule.mk {(ImportedModule.toEffectiveImport mod) with importAll, isExported, irPhases} parts irData? needsData needsIRTrans
+            let impmod := ImportedModule.mk {(ImportedModule.toEffectiveImport mod) with importAll, isExported, irPhases, hasData := needsData} parts irData? needsIRTrans
             let s' := ImportState.moduleNameMap s |>.insert i.module impmod
             let state := ImportState.mk s' <| ImportState.moduleNames s
             state
@@ -186,7 +186,7 @@ where
       -- newly discovered module
       let parts ← if needsData then loadData i else pure #[]
       let irData? ← if needsIR then loadIR? i else pure none
-      let mod := ImportedModule.mk {i with importAll, isExported, irPhases} parts irData? needsData needsIRTrans
+      let mod := { i with importAll, isExported, irPhases, parts, irData?, needsIRTrans, hasData := needsData }
       goRec mod
       modify fun (s : ImportState) =>
         ImportState.mk (ImportState.moduleNameMap s |>.insert i.module mod) ((ImportState.moduleNames s).push i.module)
